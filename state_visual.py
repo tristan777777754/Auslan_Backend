@@ -2,13 +2,16 @@
 import os
 from typing import List, Dict, Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
 
-# Load .env (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS)
+# -----------------------------
+# Load environment variables
+# -----------------------------
 load_dotenv()
 
 DB_HOST = os.getenv("DB_HOST", "database-auslan.c9yoaa6kcl93.ap-southeast-2.rds.amazonaws.com")
@@ -17,6 +20,9 @@ DB_NAME = os.getenv("DB_NAME", "myapp_db")
 DB_USER = os.getenv("DB_USER", "tristan")
 DB_PASS = os.getenv("DB_PASS", "Auslan47")
 
+# -----------------------------
+# Create DB engine
+# -----------------------------
 db_url = URL.create(
     "mysql+pymysql",
     username=DB_USER,
@@ -25,54 +31,147 @@ db_url = URL.create(
     port=DB_PORT,
     database=DB_NAME,
 )
-engine = create_engine(db_url, pool_pre_ping=True)
+# pool_pre_ping prevents stale connections on Render/RDS
+engine = create_engine(
+    db_url,
+    pool_pre_ping=True,
+    pool_recycle=280,   # recycle before AWS default idle timeout
+)
 
+# -----------------------------
+# FastAPI app & CORS
+# -----------------------------
 app = FastAPI(title="Auslan State Map API")
 
-# CORS for your frontend origin (or * while testing)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten later to your frontend domain
+    allow_origins=["*"],          # tighten to your frontend origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# -----------------------------
+# Utils
+# -----------------------------
+BLACKLIST = {"Total", "Other Territories", "OT", "Other Territory", ""}
 
+# Normalize state names to match GeoJSON naming
+STATE_NORMALIZE = {
+    "New South Wales": "New South Wales",
+    "NSW": "New South Wales",
+
+    "Victoria": "Victoria",
+    "VIC": "Victoria",
+
+    "Queensland": "Queensland",
+    "QLD": "Queensland",
+
+    "South Australia": "South Australia",
+    "SA": "South Australia",
+
+    "Western Australia": "Western Australia",
+    "WA": "Western Australia",
+
+    "Tasmania": "Tasmania",
+    "TAS": "Tasmania",
+
+    "Northern Territory": "Northern Territory",
+    "NT": "Northern Territory",
+
+    "Australian Capital Territory": "Australian Capital Territory",
+    "ACT": "Australian Capital Territory",
+}
+
+
+def normalize_state(name: str) -> str:
+    if not name:
+        return ""
+    name = name.strip()
+    # exact match
+    if name in STATE_NORMALIZE:
+        return STATE_NORMALIZE[name]
+    # try case-insensitive match
+    for k, v in STATE_NORMALIZE.items():
+        if name.lower() == k.lower():
+            return v
+    return name
+
+
+def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
+    """
+    Query table 'auslan_population_state_years' for a given year
+    and return a list of { name: <state>, value: <population> }.
+    """
+    sql = text(
+        """
+        SELECT
+            `2021State` AS state_name,
+            COALESCE(`population`, `population_[0]`) AS population
+        FROM auslan_population_state_years
+        WHERE `Year` = :year
+        """
+    )
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(sql, {"year": year}).mappings().all()
+    except SQLAlchemyError as e:
+        # Wrap DB errors for cleaner client message
+        raise HTTPException(status_code=500, detail=f"DB error: {str(e)}")
+
+    data: List[Dict[str, Any]] = []
+    for r in rows:
+        raw_name = (r.get("state_name") or "").strip()
+        if raw_name in BLACKLIST:
+            continue
+
+        name = normalize_state(raw_name)
+        try:
+            value = int(r.get("population") or 0)
+        except (TypeError, ValueError):
+            value = 0
+
+        # Filter out non-sense rows if any
+        if not name or name in BLACKLIST:
+            continue
+
+        data.append({"name": name, "value": value})
+
+    # Optional: sort for consistent rendering (by name)
+    data.sort(key=lambda x: x["name"])
+    return data
+
+
+# -----------------------------
+# Routes
+# -----------------------------
 @app.get("/health")
 def health():
     return {"ok": True}
 
 
-@app.get("/state-pop-2021")
-def state_pop_2021() -> Dict[str, Any]:
+@app.get("/state-pop")
+def state_pop_default() -> List[Dict[str, Any]]:
     """
-    Query the `auslan_population_state_years` table for year 2021.
-    Your table columns (based on your screenshot):
-      - Year
-      - 2021State
-      - population OR population_[0]
-    We COALESCE to survive either naming.
+    Default endpoint for year 2021 (array response).
+    Frontend can directly do `data.map(...)`.
     """
-    sql = text("""
-        SELECT
-          `2021State` AS state_name,
-          COALESCE(`population`, `population_[0]`) AS population
-        FROM auslan_population_state_years
-        WHERE `Year` = 2021
-    """)
+    return fetch_state_population(year=2021)
 
-    with engine.connect() as conn:
-        rows = conn.execute(sql).mappings().all()
 
-    # Clean/filter rows: drop totals/other territories if present
-    blacklist = {"Total", "Other Territories", "OT", "Other Territory"}
-    data: List[Dict[str, Any]] = []
-    for r in rows:
-        name = (r["state_name"] or "").strip()
-        if not name or name in blacklist:
-            continue
-        value = int(r["population"] or 0)
-        data.append({"name": name, "value": value})
+@app.get("/state-pop/{year}")
+def state_pop_by_year(year: int) -> List[Dict[str, Any]]:
+    """
+    Parameterized endpoint to fetch a given year (array response).
+    """
+    return fetch_state_population(year=year)
 
-    return {"year": 2021, "states": data}
+
+@app.get("/api/state-population")
+def state_pop_compat() -> List[Dict[str, Any]]:
+    """
+    Backward-compatible endpoint if your frontend already calls /api/state-population.
+    Returns the same array format.
+    """
+    return fetch_state_population(year=2021)

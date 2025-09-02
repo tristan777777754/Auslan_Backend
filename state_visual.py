@@ -31,7 +31,6 @@ db_url = URL.create(
     port=DB_PORT,
     database=DB_NAME,
 )
-# pool_pre_ping prevents stale connections on Render/RDS
 engine = create_engine(
     db_url,
     pool_pre_ping=True,
@@ -45,7 +44,7 @@ app = FastAPI(title="Auslan State Map API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # tighten to your frontend origin in production
+    allow_origins=["*"],          
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,47 +55,27 @@ app.add_middleware(
 # -----------------------------
 BLACKLIST = {"Total", "Other Territories", "OT", "Other Territory", ""}
 
-# Normalize state names to match GeoJSON naming
 STATE_NORMALIZE = {
-    "New South Wales": "New South Wales",
-    "NSW": "New South Wales",
-
-    "Victoria": "Victoria",
-    "VIC": "Victoria",
-
-    "Queensland": "Queensland",
-    "QLD": "Queensland",
-
-    "South Australia": "South Australia",
-    "SA": "South Australia",
-
-    "Western Australia": "Western Australia",
-    "WA": "Western Australia",
-
-    "Tasmania": "Tasmania",
-    "TAS": "Tasmania",
-
-    "Northern Territory": "Northern Territory",
-    "NT": "Northern Territory",
-
-    "Australian Capital Territory": "Australian Capital Territory",
-    "ACT": "Australian Capital Territory",
+    "New South Wales": "New South Wales", "NSW": "New South Wales",
+    "Victoria": "Victoria", "VIC": "Victoria",
+    "Queensland": "Queensland", "QLD": "Queensland",
+    "South Australia": "South Australia", "SA": "South Australia",
+    "Western Australia": "Western Australia", "WA": "Western Australia",
+    "Tasmania": "Tasmania", "TAS": "Tasmania",
+    "Northern Territory": "Northern Territory", "NT": "Northern Territory",
+    "Australian Capital Territory": "Australian Capital Territory", "ACT": "Australian Capital Territory",
 }
-
 
 def normalize_state(name: str) -> str:
     if not name:
         return ""
     name = name.strip()
-    # exact match
     if name in STATE_NORMALIZE:
         return STATE_NORMALIZE[name]
-    # try case-insensitive match
     for k, v in STATE_NORMALIZE.items():
         if name.lower() == k.lower():
             return v
     return name
-
 
 def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
     """
@@ -112,12 +91,10 @@ def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
         WHERE `Year` = :year
         """
     )
-
     try:
         with engine.connect() as conn:
             rows = conn.execute(sql, {"year": year}).mappings().all()
     except SQLAlchemyError as e:
-        # Wrap DB errors for cleaner client message
         raise HTTPException(status_code=500, detail=f"DB error: {str(e)}")
 
     data: List[Dict[str, Any]] = []
@@ -125,23 +102,17 @@ def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
         raw_name = (r.get("state_name") or "").strip()
         if raw_name in BLACKLIST:
             continue
-
         name = normalize_state(raw_name)
         try:
             value = int(r.get("population") or 0)
         except (TypeError, ValueError):
             value = 0
-
-        # Filter out non-sense rows if any
         if not name or name in BLACKLIST:
             continue
-
         data.append({"name": name, "value": value})
 
-    # Optional: sort for consistent rendering (by name)
     data.sort(key=lambda x: x["name"])
     return data
-
 
 # -----------------------------
 # Routes
@@ -153,25 +124,21 @@ def health():
 
 @app.get("/state-pop")
 def state_pop_default() -> List[Dict[str, Any]]:
-    """
-    Default endpoint for year 2021 (array response).
-    Frontend can directly do `data.map(...)`.
-    """
     return fetch_state_population(year=2021)
-
 
 @app.get("/state-pop/{year}")
 def state_pop_by_year(year: int) -> List[Dict[str, Any]]:
-    """
-    Parameterized endpoint to fetch a given year (array response).
-    """
     return fetch_state_population(year=year)
-
 
 @app.get("/api/state-population")
 def state_pop_compat() -> List[Dict[str, Any]]:
-    """
-    Backward-compatible endpoint if your frontend already calls /api/state-population.
-    Returns the same array format.
-    """
     return fetch_state_population(year=2021)
+
+
+@app.get("/map/state-pop-{year}")
+def map_state_pop_year(year: int) -> Dict[str, Any]:
+    return {"year": year, "states": fetch_state_population(year)}
+
+@app.get("/map/state-pop-2021")
+def map_state_pop_2021() -> Dict[str, Any]:
+    return {"year": 2021, "states": fetch_state_population(2021)}

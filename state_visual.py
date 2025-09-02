@@ -1,7 +1,6 @@
 # state_map.py
 import os
 from typing import List, Dict, Any
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
@@ -20,8 +19,6 @@ DB_NAME = os.getenv("DB_NAME", "myapp_db")
 DB_USER = os.getenv("DB_USER", "tristan")
 DB_PASS = os.getenv("DB_PASS", "Auslan47")
 
-# allow CORS origins (comma separated). Example:
-# FRONTEND_ORIGIN=https://your-frontend.onrender.com,http://localhost:5173
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "")
 
 # -----------------------------
@@ -35,11 +32,7 @@ db_url = URL.create(
     port=DB_PORT,
     database=DB_NAME,
 )
-engine = create_engine(
-    db_url,
-    pool_pre_ping=True,
-    pool_recycle=280,  # recycle before AWS default idle timeout
-)
+engine = create_engine(db_url, pool_pre_ping=True, pool_recycle=280)
 
 # -----------------------------
 # FastAPI app & CORS
@@ -49,7 +42,6 @@ app = FastAPI(title="Auslan State Map API")
 allow_origins: List[str] = []
 if FRONTEND_ORIGIN:
     allow_origins = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()]
-# always allow local dev
 if "http://localhost:5173" not in allow_origins:
     allow_origins.append("http://localhost:5173")
 
@@ -89,20 +81,13 @@ def normalize_state(name: str) -> str:
     return name
 
 def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
-    """
-    Read table 'auslan_population_state_years' for a given year and return:
-      [{ "name": <state>, "value": <population> }, ...]
-    """
-    # 同時嘗試 population 與 population_[0] 欄位
-    sql = text(
-        """
+    sql = text("""
         SELECT
             `2021State` AS state_name,
             COALESCE(`population`, `population_[0]`) AS population
         FROM auslan_population_state_years
         WHERE `Year` = :year
-        """
-    )
+    """)
     try:
         with engine.connect() as conn:
             rows = conn.execute(sql, {"year": year}).mappings().all()
@@ -123,9 +108,7 @@ def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
             continue
         data.append({"name": name, "value": value})
 
-   
-    data.sort(key=lambda x: x["name"])
-    return data
+    return sorted(data, key=lambda x: x["name"])
 
 # -----------------------------
 # Routes
@@ -134,29 +117,13 @@ def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
 def health():
     return {"ok": True}
 
+# Canonical route
+@app.get("/map/state-pop/{year}")
+def map_state_pop_year(year: int) -> Dict[str, Any]:
+    return {"year": year, "states": fetch_state_population(year)}
 
-@app.get("/state-pop")
-def state_pop_default() -> List[Dict[str, Any]]:
-    return fetch_state_population(year=2021)
-
-@app.get("/state-pop/{year}")
-def state_pop_by_year(year: int) -> List[Dict[str, Any]]:
-    return fetch_state_population(year=year)
-
-@app.get("/api/state-population")
-def state_pop_compat() -> List[Dict[str, Any]]:
-    return fetch_state_population(year=2021)
-
-
+# Default (2021) shortcut
 @app.get("/map/state-pop")
 def map_state_pop_default() -> Dict[str, Any]:
     year = 2021
     return {"year": year, "states": fetch_state_population(year)}
-
-@app.get("/map/state-pop-{year}")
-def map_state_pop_year(year: int) -> Dict[str, Any]:
-    return {"year": year, "states": fetch_state_population(year)}
-
-@app.get("/map/state-pop-2021")
-def map_state_pop_2021() -> Dict[str, Any]:
-    return {"year": 2021, "states": fetch_state_population(2021)}

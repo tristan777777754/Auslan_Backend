@@ -20,6 +20,10 @@ DB_NAME = os.getenv("DB_NAME", "myapp_db")
 DB_USER = os.getenv("DB_USER", "tristan")
 DB_PASS = os.getenv("DB_PASS", "Auslan47")
 
+# allow CORS origins (comma separated). Example:
+# FRONTEND_ORIGIN=https://your-frontend.onrender.com,http://localhost:5173
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "")
+
 # -----------------------------
 # Create DB engine
 # -----------------------------
@@ -34,7 +38,7 @@ db_url = URL.create(
 engine = create_engine(
     db_url,
     pool_pre_ping=True,
-    pool_recycle=280,   # recycle before AWS default idle timeout
+    pool_recycle=280,  # recycle before AWS default idle timeout
 )
 
 # -----------------------------
@@ -42,9 +46,16 @@ engine = create_engine(
 # -----------------------------
 app = FastAPI(title="Auslan State Map API")
 
+allow_origins: List[str] = []
+if FRONTEND_ORIGIN:
+    allow_origins = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()]
+# always allow local dev
+if "http://localhost:5173" not in allow_origins:
+    allow_origins.append("http://localhost:5173")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          
+    allow_origins=allow_origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,9 +90,10 @@ def normalize_state(name: str) -> str:
 
 def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
     """
-    Query table 'auslan_population_state_years' for a given year
-    and return a list of { name: <state>, value: <population> }.
+    Read table 'auslan_population_state_years' for a given year and return:
+      [{ "name": <state>, "value": <population> }, ...]
     """
+    # 同時嘗試 population 與 population_[0] 欄位
     sql = text(
         """
         SELECT
@@ -111,6 +123,7 @@ def fetch_state_population(year: int = 2021) -> List[Dict[str, Any]]:
             continue
         data.append({"name": name, "value": value})
 
+   
     data.sort(key=lambda x: x["name"])
     return data
 
@@ -134,6 +147,11 @@ def state_pop_by_year(year: int) -> List[Dict[str, Any]]:
 def state_pop_compat() -> List[Dict[str, Any]]:
     return fetch_state_population(year=2021)
 
+
+@app.get("/map/state-pop")
+def map_state_pop_default() -> Dict[str, Any]:
+    year = 2021
+    return {"year": year, "states": fetch_state_population(year)}
 
 @app.get("/map/state-pop-{year}")
 def map_state_pop_year(year: int) -> Dict[str, Any]:

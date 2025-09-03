@@ -2,17 +2,23 @@
 from fastapi import FastAPI
 from violin_visual import app as violin_app
 from state_visual import app as state_map_app   
-
+from year_visual import app as year_app
 app = FastAPI(title="Auslan Backend Combined")
 
-# 掛載子應用
+
 app.mount("/violin", violin_app)
 app.mount("/map", state_map_app)
+app.mount("/year", year_app)
 
 @app.get("/")
 def root():
-    return {"message": "Auslan Backend API", "available_endpoints": ["/violin", "/map", "/health"]}
+    return {
+        "message": "Auslan Backend API",
+        "available_endpoints": ["/violin", "/map", "/year", "/health"] }
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "apps": ["violin", "map"]}
+    return {
+        "status": "ok",
+        "apps": ["violin", "map", "year"]  
+    }

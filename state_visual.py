@@ -1,12 +1,17 @@
 import os
 from typing import List, Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded
 
 # Load environment variables
 load_dotenv()
@@ -17,7 +22,7 @@ DB_NAME = os.getenv("DB_NAME", "")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASS = os.getenv("DB_PASS", "")
 
-print(f"DB_HOST from env = {DB_HOST}")
+#print(f"DB_HOST from env = {DB_HOST}")
 
 db_url = URL.create(
     "mysql+pymysql",
@@ -53,25 +58,43 @@ app = FastAPI(title="Auslan State Map API")
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://helloauslan.me"],          # tighten to your frontend origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# -------------------------
+# Rate limiters
+# -------------------------
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_handler(request, exc):  # type: ignore
+    return PlainTextResponse("Too Many Requests", status_code=429)
+
 @app.get("/")
-def map_root():
+@limiter.limit("5/10second")
+def map_root(request: Request):
     return {"message": "Auslan State Map API", "endpoints": ["/state-pop-2021", "/test-db", "/debug-table"]}
 
 @app.get("/state-pop-2021")
-def state_pop_2021() -> Dict[str, Any]:
+@limiter.limit("5/10second")
+def state_pop_2021(request: Request) -> Dict[str, Any]:
     """
     Query auslan_population_state_years.
     根據實際資料庫結構：只有 2021State 和 population_[0] 兩個欄位
     """
     if not engine:
-        raise HTTPException(status_code=500, detail="Database connection not available")
-    
+        # raise HTTPException(status_code=500, detail="Database connection not available")
+        return JSONResponse(
+            status_code=500,
+            content={"Error": "Internal server error."}
+        )
+
     # 修正SQL查詢 - 使用正確的欄位名稱
     sql = text("""
         SELECT
@@ -137,7 +160,8 @@ def state_pop_2021() -> Dict[str, Any]:
     return {"states": states}
 
 @app.get("/test-db")
-def test_db():
+@limiter.limit("5/10second")
+def test_db(request: Request):
     """測試資料庫連線"""
     if not engine:
         return {"status": "error", "message": "Database engine not initialized"}
@@ -147,10 +171,15 @@ def test_db():
             result = conn.execute(text("SELECT 1 as test"))
             return {"status": "success", "message": "Database connection working"}
     except Exception as e:
-        return {"status": "error", "message": f"Database connection failed: {str(e)}"}
+        # return {"status": "error", "message": "Database connection failed:"}
+        return JSONResponse(
+            status_code=500,
+            content={"Error": "Internal server error."}
+        )
 
 @app.get("/debug-table")
-def debug_table():
+@limiter.limit("5/10second")
+def debug_table(request: Request):
     """檢查表格結構和數據"""
     if not engine:
         raise HTTPException(status_code=500, detail="Database connection not available")
@@ -178,10 +207,11 @@ def debug_table():
                 "total_rows": total_rows
             }
     except Exception as e:
-        return {"error": f"Debug query failed: {str(e)}"}
+        return {"error": "Debug query failed: "}
 
 @app.get("/raw-data")
-def raw_data():
+@limiter.limit("5/10second")
+def raw_data(request: Request):
     """返回原始數據，用於除錯"""
     if not engine:
         raise HTTPException(status_code=500, detail="Database connection not available")
@@ -196,4 +226,4 @@ def raw_data():
                 "count": len(rows)
             }
     except Exception as e:
-        return {"error": f"Raw data query failed: {str(e)}"}
+        return {"error": "Raw data query failed: "}

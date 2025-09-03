@@ -7,18 +7,25 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import QueuePool
 from dotenv import load_dotenv
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded
+# Security headers middleware imports
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 # -------------------------
 # Config / DB engine
 # -------------------------
 load_dotenv()  # load .env file
-print("DB_HOST from env =", os.getenv("DB_HOST"))
+print("DB_HOST from env =", os.getenv("DB_HOST"))   
 
 DB_HOST = os.getenv("DB_HOST", "")
 DB_PORT = int(os.getenv("DB_PORT", ""))
@@ -42,15 +49,43 @@ engine = create_engine(
 # FastAPI app
 # -------------------------
 app = FastAPI(title="Auslan API", version="1.0.0")
+# -------------------------
+# Security Headers Middleware
+# -------------------------
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # Add common security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+# Register the security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS (relax for demo; tighten for production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://helloauslan.me"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -------------------------
+# Rate limiters
+# -------------------------
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+@app.exception_handler(RateLimitExceeded)
+def _rate_limit_handler(request, exc):  # type: ignore
+    return PlainTextResponse("Too Many Requests", status_code=429)
 
 # -------------------------
 # Helpers
@@ -162,15 +197,18 @@ def make_pyramid_figure(df_plot: pd.DataFrame, title_suffix: str) -> go.Figure:
 # General Routes (existing)
 # -------------------------
 @app.get("/", response_class=JSONResponse)
-def root():
+@limiter.limit("5/10second")
+def root(request: Request):
     return {"message": "Hello Auslan API is running!"}
 
 @app.get("/health", response_class=PlainTextResponse)
-def health():
+@limiter.limit("5/10second")
+def health(request: Request):
     return "ok"
 
 @app.get("/age-data", response_class=JSONResponse)
-def get_age_data():
+@limiter.limit("5/10second")
+def get_age_data(request: Request):
     """
     Cleaned Auslan age data as JSON (generic).
     """
@@ -183,9 +221,14 @@ def get_age_data():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    #     return JSONResponse(
+    #     status_code=500,
+    #     content={"Error": "Internal server error."}
+    # )
 
 @app.get("/age-pyramid", response_class=HTMLResponse)
-def age_pyramid_html():
+@limiter.limit("5/10second")
+def age_pyramid_html(request:Request):
     """
     Standalone Plotly HTML (generic)  can be embedded with <iframe>.
     """
@@ -197,10 +240,15 @@ def age_pyramid_html():
                            config={"displaylogo": False,"displayModeBar": False, "responsive": True})
         return HTMLResponse(content=html)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+        status_code=500,
+        content={"Error": "Internal server error."}
+    )
 
 @app.get("/age-pyramid.json", response_class=JSONResponse)
-def age_pyramid_json():
+@limiter.limit("5/10second")
+def age_pyramid_json(request: Request):
     """
     Plotly figure JSON (generic).
     """
@@ -210,14 +258,20 @@ def age_pyramid_json():
         fig = make_pyramid_figure(df_plot, "Auslan Community Age Distribution (2021)")
         return JSONResponse(content=json.loads(pio.to_json(fig, validate=True)))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"Error": "Internal server error."}
+        )
 
 
 # -------------------------
 # Trends-only Routes (scope this viz to Trends tab)
 # -------------------------
 @app.get("/trends/age-data", response_class=JSONResponse)
+@limiter.limit("5/10second")
 def trends_age_data(
+    request: Request,
     table: str = Query("auslan_age_2021", description="MySQL table name"),
     male_ratio: float = Query(0.51, ge=0.0, le=1.0)
 ):
@@ -230,10 +284,16 @@ def trends_age_data(
         rows = df_plot[["Age_years", value_col, "age_start", "Male", "Female"]].to_dict(orient="records")
         return {"scope": "trends", "table": table, "value_column": value_col, "rows": rows}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"Error": "Internal server error."}
+        )
 
 @app.get("/trends/age-pyramid", response_class=HTMLResponse)
+@limiter.limit("5/10second")
 def trends_age_pyramid_html(
+    request:Request,
     table: str = Query("auslan_age_2021"),
     male_ratio: float = Query(0.51, ge=0.0, le=1.0),
     title: str = Query("Auslan Community Age Distribution (2021)")
@@ -249,10 +309,16 @@ def trends_age_pyramid_html(
                            config={"displaylogo": False, "responsive": True})
         return HTMLResponse(content=html)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"Error": "Internal server error."}
+        )
 
 @app.get("/trends/age-pyramid.json", response_class=JSONResponse)
+@limiter.limit("5/10second")
 def trends_age_pyramid_json(
+    request:Request,
     table: str = Query("auslan_age_2021"),
     male_ratio: float = Query(0.51, ge=0.0, le=1.0),
     title: str = Query("Auslan Community Age Distribution (2021)")
@@ -266,4 +332,8 @@ def trends_age_pyramid_json(
         fig = make_pyramid_figure(df_plot, title)
         return JSONResponse(content=json.loads(pio.to_json(fig, validate=True)))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"Error": "Internal server error."}
+        )

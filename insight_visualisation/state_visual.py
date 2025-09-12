@@ -33,7 +33,7 @@ db_url = URL.create(
     database=DB_NAME,
 )
 
-
+# 初始化資料庫引擎
 engine = None
 try:
     engine = create_engine(
@@ -44,7 +44,7 @@ try:
         pool_size=5,
         max_overflow=10
     )
- 
+    # 測試連線
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
     print("Database connection successful")
@@ -52,7 +52,7 @@ except Exception as e:
     print(f"Database connection error: {e}")
     engine = None
 
-
+# 創建FastAPI應用
 app = FastAPI(title="Auslan State Map API")
 
 # Enable CORS
@@ -86,7 +86,7 @@ def map_root(request: Request):
 def state_pop_2021(request: Request) -> Dict[str, Any]:
     """
     Query auslan_population_state_years.
-    
+    根據實際資料庫結構：只有 2021State 和 population_[0] 兩個欄位
     """
     if not engine:
         # raise HTTPException(status_code=500, detail="Database connection not available")
@@ -95,7 +95,7 @@ def state_pop_2021(request: Request) -> Dict[str, Any]:
             content={"Error": "Internal server error."}
         )
 
-  
+    # 修正SQL查詢 - 使用正確的欄位名稱
     sql = text("""
         SELECT
           `2021State` AS state_name,
@@ -127,7 +127,7 @@ def state_pop_2021(request: Request) -> Dict[str, Any]:
     for r in rows:
         state_name = (r["state_name"] or "").strip()
         
-        
+        # 跳過黑名單中的項目
         if not state_name or state_name in blacklist:
             continue
         

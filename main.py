@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from violin_visual import app as violin_app
 from state_visual import app as state_map_app   
 from year_visual import app as year_app
+from ingest_router import router as ingest_router 
 from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Auslan Backend Combined")
 
@@ -17,6 +18,7 @@ app.add_middleware(
 app.mount("/violin", violin_app)
 app.mount("/map", state_map_app)
 app.mount("/year", year_app)
+app.include_router(ingest_router)
 
 @app.get("/")
 def root():

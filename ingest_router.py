@@ -4,7 +4,7 @@ from s3_toSQL import ingest_from_s3
 
 router = APIRouter(tags=["admin"])
 
-@router.post("/admin/ingest-s3")
+@router.get("/admin/ingest-s3")
 def run_ingest():
     """
     Trigger a one-off S3 -> MySQL import.

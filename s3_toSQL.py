@@ -59,15 +59,14 @@ CREATE TABLE IF NOT EXISTS videos (
 """
 
 UPSERT_SQL = """
-INSERT INTO videos (id, name, s3_bucket, s3_key, s3_url, size, etag, last_modified)
-VALUES (:id, :name, :bucket, :key, :url, :size, :etag, :last_modified)
+INSERT INTO videos (s3_key, filename, url, size_bytes, etag, last_modified)
+VALUES (:key, :name, :url, :size, :etag, :last_modified)
 ON DUPLICATE KEY UPDATE
-  id = VALUES(id),
-  name = VALUES(name),
-  s3_url = VALUES(s3_url),
-  size = VALUES(size),
-  etag = VALUES(etag),
-  last_modified = VALUES(last_modified);
+  filename     = VALUES(filename),
+  url          = VALUES(url),
+  size_bytes   = VALUES(size_bytes),
+  etag         = VALUES(etag),
+  last_modified= VALUES(last_modified);
 """
 
 def ensure_table(engine):
@@ -144,10 +143,8 @@ def ingest_from_s3() -> Dict:
                     res = conn.execute(
                         text(UPSERT_SQL),
                         {
-                            "id": vid,
-                            "name": name,
-                            "bucket": S3_BUCKET,
                             "key": key,
+                            "name": name,  
                             "url": url,
                             "size": size,
                             "etag": etag,

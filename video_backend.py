@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Depends
+# video_backend.py
+from fastapi import APIRouter
 from sqlalchemy import create_engine, text
 import os
 
-app = FastAPI()
+router = APIRouter()
 
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT", 3306)
@@ -13,7 +14,7 @@ DB_PASS = os.getenv("DB_PASS")
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 engine = create_engine(DATABASE_URL)
 
-@app.get("/videos")
+@router.get("/videos")
 def get_videos():
     with engine.connect() as conn:
         result = conn.execute(text("SELECT id, filename, url FROM videos"))

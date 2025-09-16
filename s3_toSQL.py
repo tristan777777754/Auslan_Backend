@@ -117,7 +117,7 @@ def parse_id_and_name_from_key(key: str) -> Tuple[int | None, str]:
     return vid, safe_name
 
 # ---------- Main ingest ----------
-def ingest_from_s3() -> Dict:
+def ingest_from_s3(prefix: str = "") -> Dict:
     engine = get_db_engine()
     ensure_table(engine)
 
@@ -128,7 +128,7 @@ def ingest_from_s3() -> Dict:
 
     try:
         with engine.begin() as conn:
-            for obj in list_mp4_objects(S3_BUCKET, S3_PREFIX):
+            for obj in list_mp4_objects(S3_BUCKET, prefix):
                 scanned += 1
                 key = obj["Key"]
                 size = obj.get("Size")

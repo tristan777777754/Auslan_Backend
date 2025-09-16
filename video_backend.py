@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from sqlalchemy import create_engine, text
 import os
 import boto3
+from botocore.client import Config
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
@@ -20,7 +21,7 @@ engine = create_engine(DATABASE_URL)
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 S3_BUCKET = os.getenv("S3_BUCKET", "demo2109bhargav")
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+s3 = boto3.client("s3", region_name=AWS_REGION, config=Config(signature_version="s3v4"))
 
 # ---------- API: Get all videos with pre-signed URL ----------
 @router.get("/")

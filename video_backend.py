@@ -36,7 +36,7 @@ def get_videos():
             url = s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": S3_BUCKET, "Key": video["s3_key"]},
-                ExpiresIn=31536000  # API URL valid for 1 year
+                ExpiresIn=604800  # API URL valid for 1 year
             )
             video["url"] = url
             videos.append(video)

@@ -58,8 +58,8 @@ CREATE TABLE IF NOT EXISTS videos (
 """
 
 UPSERT_SQL = """
-INSERT INTO videos (id, filename, s3_bucket, s3_key, url, size_bytes, etag, last_modified)
-VALUES (:id, :filename, :bucket, :key, :url, :size, :etag, :last_modified)
+INSERT INTO videos (id, filename, s3_key, url, size_bytes, etag, last_modified)
+VALUES (:id, :filename, :key, :url, :size, :etag, :last_modified)
 ON DUPLICATE KEY UPDATE
   filename     = VALUES(filename),
   url          = VALUES(url),

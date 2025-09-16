@@ -1,4 +1,4 @@
-# s3_ingest.py
+# s3_toSQL.py
 import os
 import re
 from datetime import datetime
@@ -18,7 +18,6 @@ DB_PASS = os.getenv("DB_PASS", "")
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 S3_BUCKET = os.getenv("S3_BUCKET", "demo2109bhargav")
-S3_PREFIX = os.getenv("S3_PREFIX", "").strip()  # optional, can be empty
 
 # ---------- DB engine ----------
 def get_db_engine():
@@ -43,24 +42,24 @@ def get_db_engine():
 CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS videos (
   id INT NULL,
-  name VARCHAR(255) NULL,
+  filename VARCHAR(255) NULL,
   s3_bucket VARCHAR(128) NOT NULL,
   s3_key VARCHAR(1024) NOT NULL,
-  s3_url VARCHAR(1024) NOT NULL,
-  size BIGINT NULL,
+  url VARCHAR(1024) NOT NULL,
+  size_bytes BIGINT NULL,
   etag VARCHAR(128) NULL,
   last_modified DATETIME NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_s3_key (s3_key),
   INDEX idx_id (id),
-  INDEX idx_name (name)
+  INDEX idx_name (filename)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 UPSERT_SQL = """
-INSERT INTO videos (s3_key, filename, url, size_bytes, etag, last_modified)
-VALUES (:key, :name, :url, :size, :etag, :last_modified)
+INSERT INTO videos (id, filename, s3_bucket, s3_key, url, size_bytes, etag, last_modified)
+VALUES (:id, :filename, :bucket, :key, :url, :size, :etag, :last_modified)
 ON DUPLICATE KEY UPDATE
   filename     = VALUES(filename),
   url          = VALUES(url),
@@ -96,23 +95,16 @@ def list_mp4_objects(bucket: str, prefix: str = "") -> Iterable[Dict]:
                 }
 
 def public_url(bucket: str, key: str) -> str:
-    # Works for public/allow-listed buckets or when used only for display
-    # (not a signed URL). For us-east-1 this format is also fine.
     return f"https://{bucket}.s3.{AWS_REGION}.amazonaws.com/{key}"
 
 # ---------- Basic name/id parsing from filename ----------
-# Examples:
-#   00083_kf_rgb.mp4     -> id=83, name="00083_kf_rgb"
-#   folder/00157_abc.mp4 -> id=157, name="00157_abc"
-#   apple.mp4            -> id=None, name="apple"
-ID_PREFIX = re.compile(r"^(\d{1,6})")  # up to 6 digits at start
+ID_PREFIX = re.compile(r"^(\d{1,6})")
 
 def parse_id_and_name_from_key(key: str) -> Tuple[int | None, str]:
     fname = os.path.basename(key)
     stem = os.path.splitext(fname)[0]
     m = ID_PREFIX.match(stem)
     vid = int(m.group(1)) if m else None
-    # normalize "name" for display/search: lower, spaces/underscores kept
     safe_name = stem.strip().lower()
     return vid, safe_name
 
@@ -122,7 +114,6 @@ def ingest_from_s3(prefix: str = "") -> Dict:
     ensure_table(engine)
 
     inserted = 0
-    updated = 0
     scanned = 0
     errors: list[str] = []
 
@@ -136,25 +127,24 @@ def ingest_from_s3(prefix: str = "") -> Dict:
                 lm = obj.get("LastModified")
                 lm_dt: datetime | None = lm if isinstance(lm, datetime) else None
 
-                vid, name = parse_id_and_name_from_key(key)
+                vid, filename = parse_id_and_name_from_key(key)
                 url = public_url(S3_BUCKET, key)
 
                 try:
-                    res = conn.execute(
+                    conn.execute(
                         text(UPSERT_SQL),
                         {
+                            "id": vid,
+                            "filename": filename,
+                            "bucket": S3_BUCKET,
                             "key": key,
-                            "name": name,  
                             "url": url,
                             "size": size,
                             "etag": etag,
                             "last_modified": lm_dt,
                         },
                     )
-                    # MySQL's ON DUPLICATE KEY doesn't tell us inserted vs updated reliably.
-                    # We'll just count as "inserted/updated" based on rowcount when possible.
-                    if res.rowcount and res.rowcount > 0:
-                        inserted += 1  # treat as success
+                    inserted += 1
                 except Exception as e:
                     errors.append(f"{key}: {e}")
 
@@ -163,7 +153,7 @@ def ingest_from_s3(prefix: str = "") -> Dict:
 
     return {
         "bucket": S3_BUCKET,
-        "prefix": S3_PREFIX,
+        "prefix": prefix,
         "scanned": scanned,
         "upserted": inserted,
         "errors": errors,

@@ -27,7 +27,7 @@ s3 = boto3.client("s3", region_name=AWS_REGION, config=Config(signature_version=
 @router.get("/")
 def get_videos():
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT id, filename, s3_key FROM videos"))
+        result = conn.execute(text("SELECT id, filename, s3_key FROM videos WHERE s3_key LIKE 'converted/%'"))
         videos = []
         for row in result:
             video = dict(row._mapping)

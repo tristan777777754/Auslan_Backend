@@ -31,6 +31,8 @@ def get_videos():
         videos = []
         for row in result:
             video = dict(row._mapping)
+            print("DEBUG s3_key:", video["s3_key"])
+
 
             #  pre-signed URL
             url = s3.generate_presigned_url(

@@ -38,7 +38,7 @@ def get_db_engine():
         max_overflow=10,
     )
 
-# ---------- Helpers for dynamic SQL ----------
+# ---------- Create table SQL (with shorter index on s3_key) ----------
 def create_table_sql(table: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table} (
@@ -51,23 +51,22 @@ def create_table_sql(table: str) -> str:
       last_modified DATETIME NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_s3_key (s3_key),
+      UNIQUE KEY uk_s3_key (s3_key(255)),  
       INDEX idx_id (id),
       INDEX idx_name (filename)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     """
 
-def upsert_sql(table: str) -> str:
-    return f"""
-    INSERT INTO {table} (id, filename, s3_key, url, size_bytes, etag, last_modified)
-    VALUES (:id, :filename, :key, :url, :size, :etag, :last_modified)
-    ON DUPLICATE KEY UPDATE
-      filename     = VALUES(filename),
-      url          = VALUES(url),
-      size_bytes   = VALUES(size_bytes),
-      etag         = VALUES(etag),
-      last_modified= VALUES(last_modified);
-    """
+UPSERT_SQL_TEMPLATE = """
+INSERT INTO {table} (id, filename, s3_key, url, size_bytes, etag, last_modified)
+VALUES (:id, :filename, :key, :url, :size, :etag, :last_modified)
+ON DUPLICATE KEY UPDATE
+  filename     = VALUES(filename),
+  url          = VALUES(url),
+  size_bytes   = VALUES(size_bytes),
+  etag         = VALUES(etag),
+  last_modified= VALUES(last_modified);
+"""
 
 # ---------- S3 helpers ----------
 def s3_client():
@@ -109,11 +108,12 @@ def parse_id_and_name_from_key(key: str) -> Tuple[int | None, str]:
 def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
     engine = get_db_engine()
 
-    
+
     table_name = collection or (prefix.rstrip("/").replace("/", "_") + "_video")
 
-    create_sql = create_table_sql(table_name)
-    upsert = upsert_sql(table_name)
+   
+    with engine.begin() as conn:
+        conn.execute(text(create_table_sql(table_name)))
 
     inserted = 0
     scanned = 0
@@ -121,7 +121,7 @@ def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
 
     try:
         with engine.begin() as conn:
-            conn.execute(text(create_sql))  
+            upsert_sql = UPSERT_SQL_TEMPLATE.format(table=table_name)
 
             for obj in list_mp4_objects(S3_BUCKET, prefix):
                 scanned += 1
@@ -136,7 +136,7 @@ def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
 
                 try:
                     conn.execute(
-                        text(upsert),
+                        text(upsert_sql),
                         {
                             "id": vid,
                             "filename": filename,
@@ -157,7 +157,7 @@ def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
     return {
         "bucket": S3_BUCKET,
         "prefix": prefix,
-        "collection": table_name,
+        "table": table_name,
         "scanned": scanned,
         "upserted": inserted,
         "errors": errors,

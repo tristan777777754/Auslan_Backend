@@ -49,23 +49,26 @@ CREATE TABLE IF NOT EXISTS videos (
   size_bytes BIGINT NULL,
   etag VARCHAR(128) NULL,
   last_modified DATETIME NULL,
+  collection VARCHAR(255) NULL,   
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_s3_key (s3_key),
   INDEX idx_id (id),
-  INDEX idx_name (filename)
+  INDEX idx_name (filename),
+  INDEX idx_collection (collection)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 UPSERT_SQL = """
-INSERT INTO videos (id, filename, s3_key, url, size_bytes, etag, last_modified)
-VALUES (:id, :filename, :key, :url, :size, :etag, :last_modified)
+INSERT INTO videos (id, filename, s3_bucket, s3_key, url, size_bytes, etag, last_modified, collection)
+VALUES (:id, :filename, :bucket, :key, :url, :size, :etag, :last_modified, :collection)
 ON DUPLICATE KEY UPDATE
   filename     = VALUES(filename),
   url          = VALUES(url),
   size_bytes   = VALUES(size_bytes),
   etag         = VALUES(etag),
-  last_modified= VALUES(last_modified);
+  last_modified= VALUES(last_modified),
+  collection   = VALUES(collection);
 """
 
 def ensure_table(engine):
@@ -97,7 +100,7 @@ def list_mp4_objects(bucket: str, prefix: str = "") -> Iterable[Dict]:
 def public_url(bucket: str, key: str) -> str:
     return f"https://{bucket}.s3.{AWS_REGION}.amazonaws.com/{key}"
 
-# ---------- Basic name/id parsing from filename ----------
+# ---------- Basic name/id parsing ----------
 ID_PREFIX = re.compile(r"^(\d{1,6})")
 
 def parse_id_and_name_from_key(key: str) -> Tuple[int | None, str]:
@@ -109,13 +112,16 @@ def parse_id_and_name_from_key(key: str) -> Tuple[int | None, str]:
     return vid, safe_name
 
 # ---------- Main ingest ----------
-def ingest_from_s3(prefix: str = "") -> Dict:
+def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
     engine = get_db_engine()
     ensure_table(engine)
 
     inserted = 0
     scanned = 0
     errors: list[str] = []
+
+    # 如果沒給 collection，就用 prefix 當作 collection 名稱
+    collection_name = collection or (prefix.rstrip("/").replace("/", "_") + "_video")
 
     try:
         with engine.begin() as conn:
@@ -142,6 +148,7 @@ def ingest_from_s3(prefix: str = "") -> Dict:
                             "size": size,
                             "etag": etag,
                             "last_modified": lm_dt,
+                            "collection": collection_name,
                         },
                     )
                     inserted += 1
@@ -154,6 +161,7 @@ def ingest_from_s3(prefix: str = "") -> Dict:
     return {
         "bucket": S3_BUCKET,
         "prefix": prefix,
+        "collection": collection_name,
         "scanned": scanned,
         "upserted": inserted,
         "errors": errors,

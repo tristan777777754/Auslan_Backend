@@ -38,42 +38,36 @@ def get_db_engine():
         max_overflow=10,
     )
 
-# ---------- Ensure table exists ----------
-CREATE_SQL = """
-CREATE TABLE IF NOT EXISTS videos (
-  id INT NULL,
-  filename VARCHAR(255) NULL,
-  s3_bucket VARCHAR(128) NOT NULL,
-  s3_key VARCHAR(1024) NOT NULL,
-  url VARCHAR(1024) NOT NULL,
-  size_bytes BIGINT NULL,
-  etag VARCHAR(128) NULL,
-  last_modified DATETIME NULL,
-  collection VARCHAR(255) NULL,   
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uk_s3_key (s3_key),
-  INDEX idx_id (id),
-  INDEX idx_name (filename),
-  INDEX idx_collection (collection)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-"""
+# ---------- Helpers for dynamic SQL ----------
+def create_table_sql(table: str) -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS {table} (
+      id INT NULL,
+      filename VARCHAR(255) NULL,
+      s3_key VARCHAR(1024) NOT NULL,
+      url VARCHAR(1024) NOT NULL,
+      size_bytes BIGINT NULL,
+      etag VARCHAR(128) NULL,
+      last_modified DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_s3_key (s3_key),
+      INDEX idx_id (id),
+      INDEX idx_name (filename)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
 
-UPSERT_SQL = """
-INSERT INTO videos (id, filename, s3_key, url, size_bytes, etag, last_modified, collection)
-VALUES (:id, :filename, :key, :url, :size, :etag, :last_modified, :collection)
-ON DUPLICATE KEY UPDATE
-  filename     = VALUES(filename),
-  url          = VALUES(url),
-  size_bytes   = VALUES(size_bytes),
-  etag         = VALUES(etag),
-  last_modified= VALUES(last_modified),
-  collection   = VALUES(collection);
-"""
-
-def ensure_table(engine):
-    with engine.begin() as conn:
-        conn.execute(text(CREATE_SQL))
+def upsert_sql(table: str) -> str:
+    return f"""
+    INSERT INTO {table} (id, filename, s3_key, url, size_bytes, etag, last_modified)
+    VALUES (:id, :filename, :key, :url, :size, :etag, :last_modified)
+    ON DUPLICATE KEY UPDATE
+      filename     = VALUES(filename),
+      url          = VALUES(url),
+      size_bytes   = VALUES(size_bytes),
+      etag         = VALUES(etag),
+      last_modified= VALUES(last_modified);
+    """
 
 # ---------- S3 helpers ----------
 def s3_client():
@@ -114,17 +108,21 @@ def parse_id_and_name_from_key(key: str) -> Tuple[int | None, str]:
 # ---------- Main ingest ----------
 def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
     engine = get_db_engine()
-    ensure_table(engine)
+
+    
+    table_name = collection or (prefix.rstrip("/").replace("/", "_") + "_video")
+
+    create_sql = create_table_sql(table_name)
+    upsert = upsert_sql(table_name)
 
     inserted = 0
     scanned = 0
     errors: list[str] = []
 
-    # 如果沒給 collection，就用 prefix 當作 collection 名稱
-    collection_name = collection or (prefix.rstrip("/").replace("/", "_") + "_video")
-
     try:
         with engine.begin() as conn:
+            conn.execute(text(create_sql))  
+
             for obj in list_mp4_objects(S3_BUCKET, prefix):
                 scanned += 1
                 key = obj["Key"]
@@ -138,17 +136,15 @@ def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
 
                 try:
                     conn.execute(
-                        text(UPSERT_SQL),
+                        text(upsert),
                         {
                             "id": vid,
                             "filename": filename,
-                            "bucket": S3_BUCKET,
                             "key": key,
                             "url": url,
                             "size": size,
                             "etag": etag,
                             "last_modified": lm_dt,
-                            "collection": collection_name,
                         },
                     )
                     inserted += 1
@@ -161,7 +157,7 @@ def ingest_from_s3(prefix: str = "", collection: str = None) -> Dict:
     return {
         "bucket": S3_BUCKET,
         "prefix": prefix,
-        "collection": collection_name,
+        "collection": table_name,
         "scanned": scanned,
         "upserted": inserted,
         "errors": errors,

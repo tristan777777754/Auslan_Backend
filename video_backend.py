@@ -1,27 +1,10 @@
-# video_backend.py
 from fastapi import APIRouter
 from sqlalchemy import create_engine, text
-from fastapi import APIRouter, Request
-from fastapi.responses import PlainTextResponse
 import os
 import boto3
 from botocore.client import Config
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.errors import RateLimitExceeded
 
 router = APIRouter(prefix="/videos", tags=["videos"])
-# -------------------------
-# Rate limiters
-# -------------------------
-limiter = Limiter(key_func=get_remote_address)
-router.state.limiter = limiter
-router.add_middleware(SlowAPIMiddleware)
-
-@router.exception_handler(RateLimitExceeded)
-def _rate_limit_handler(request: Request, exc):  # type: ignore
-    return PlainTextResponse("Too Many Requests", status_code=429)
 
 # ---------- DB Settings ----------
 DB_HOST = os.getenv("DB_HOST")
@@ -41,8 +24,7 @@ s3 = boto3.client("s3", region_name=AWS_REGION, config=Config(signature_version=
 
 # ---------- API: Get all videos with pre-signed URL ----------
 @router.get("/")
-@limiter.limit("5/10second")
-def get_videos(request: Request):
+def get_videos():
     with engine.connect() as conn:
         result = conn.execute(text(
             "SELECT id, filename, s3_key FROM videos WHERE s3_key LIKE 'converted/%' "

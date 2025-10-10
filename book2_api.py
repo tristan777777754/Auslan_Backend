@@ -5,7 +5,7 @@ import os
 import boto3
 from botocore.client import Config
 
-router = APIRouter(prefix="/book2", tags=["book1 videos"])
+router = APIRouter(prefix="/book2", tags=["book2 videos"])
 
 # ---------- DB Settings ----------
 DB_HOST = os.getenv("DB_HOST")

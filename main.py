@@ -7,6 +7,7 @@ from ingest_router import router as ingest_router
 from fastapi.middleware.cors import CORSMiddleware
 from video_backend import router as video_router
 from book1_api import router as book1_router
+from book2_api import router as book2_router
 app = FastAPI(title="Auslan Backend Combined")
 
 app.add_middleware(
@@ -23,6 +24,7 @@ app.mount("/year", year_app)
 app.include_router(ingest_router)
 app.include_router(video_router)
 app.include_router(book1_router)
+app.include_router(book2_router)
 
 @app.get("/")
 def root():

@@ -27,7 +27,7 @@ s3 = boto3.client("s3", region_name=AWS_REGION, config=Config(signature_version=
 @router.get("/")
 def get_book1_videos():
     with engine.connect() as conn:
-        result = conn.execute(text("SELECT id, filename, s3_key FROM book_2_video"))
+        result = conn.execute(text("SELECT id, filename, s3_key FROM book_3_video"))
         videos = []
         for row in result:
             video = dict(row._mapping)

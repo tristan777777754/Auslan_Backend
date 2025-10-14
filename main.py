@@ -12,7 +12,7 @@ app = FastAPI(title="Auslan Backend Combined")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://helloauslan.me"],          # tighten to your frontend origin in production
+    allow_origins=["https://helloauslan.me" , "http://localhost"],          # tighten to your frontend origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
